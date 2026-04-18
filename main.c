@@ -1,54 +1,89 @@
 #include "tap.h"
 #include "arp.h"
 #include "ip.h"
-#include "socket.h"
+#include "tcp.h"
+#include "wdm_coupling.h"
 #include <pthread.h>
-#include <arpa/inet.h>   // 新增：定义 ntohs/htons 网络字节序函数
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
 
-// 全局变量：TAP 文件描述符
 int tap_fd;
-// TAP 设备名
 #define TAP_DEV "tap0"
 
-// 协议栈主循环：持续收包
 void *net_loop(void *arg) {
-    uint8_t buf[2048];  // 数据缓冲区
+    uint8_t buf[2048];
     int len;
-
     printf("协议栈主循环启动，开始监听数据包...\n");
 
     while (1) {
-        // 从 TAP 读取数据包
         len = tap_read(tap_fd, buf, sizeof(buf));
         if (len <= 0) continue;
 
         struct eth_hdr *eth = (struct eth_hdr *)buf;
         uint16_t type = ntohs(eth->type);
 
-        // 分发数据包
-        if (type == 0x0806) {       // ARP
+        if (type == 0x0806) {
             arp_process(buf, len);
-        } else if (type == 0x0800) { // IPv4
+        } else if (type == 0x0800) {
             ip_process(buf, len);
         }
     }
     return NULL;
 }
 
+void *wdm_sender_thread(void *arg)
+{
+    char send_buf[256];
+    int send_len;
+    WDM_Coupling_Data wdm;
+
+    while (1)
+    {
+        wdm_coupling_read(&wdm);
+
+        printf("\n===== WDM光波导耦合监测 =====\n");
+        printf("1030nm输入: %.1f\n", wdm.input_1030);
+        printf("OUT1:%.1f OUT2:%.1f OUT3:%.1f OUT4:%.1f\n",
+               wdm.out1_1030, wdm.out2_1030,
+               wdm.out3_1030, wdm.out4_1030);
+        printf("耦合效率: %.1f%%\n", wdm.coupling_efficiency);
+        printf("告警状态: %s\n", wdm.alarm ? "异常" : "正常");
+
+        wdm_coupling_pack(&wdm, send_buf, &send_len);
+
+        extern void tcp_send_data(uint8_t *src_ip, uint8_t *dst_ip,
+                                 uint16_t src_port, uint16_t dst_port,
+                                 char *data, int len);
+
+        uint8_t src_ip[4] = {192,168,100,10};
+        uint8_t dst_ip[4] = {192,168,100,2};
+        tcp_send_data(src_ip, dst_ip, 8080, 8080, send_buf, send_len);
+
+        sleep(2);
+    }
+    return NULL;
+}
+
+// 空实现，解决未定义错误
+void mini_socket_init(){}
+void mini_bind(int port){}
+
 int main() {
-    // 1. 创建 TAP 设备
     tap_fd = tap_create(TAP_DEV);
     if (tap_fd < 0) return -1;
 
-    // 2. 初始化 Socket 接口
-    mini_socket_init();
-    mini_bind(8080);  // 绑定 8080 端口
+    // 绑定端口
+    tcp_set_bound_port(8080);
 
-    // 3. 启动协议栈循环（线程）
     pthread_t tid;
     pthread_create(&tid, NULL, net_loop, NULL);
 
-    // 等待线程
+    pthread_t wdm_tid;
+    pthread_create(&wdm_tid, NULL, wdm_sender_thread, NULL);
+
     pthread_join(tid, NULL);
     return 0;
 }
