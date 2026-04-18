@@ -49,9 +49,9 @@ void send_tcp_syn_ack(uint8_t *buf, int len) {
     memcpy(eth->smac, local_mac, 6);
 
     uint8_t temp_ip[4];
-    memcpy(temp_ip, ip->sip, 4);
-    memcpy(ip->sip, ip->dip, 4);
-    memcpy(ip->dip, temp_ip, 4);
+    memcpy(temp_ip, &ip->sip, 4);
+    memcpy(&ip->sip, &ip->dip, 4);
+    memcpy(&ip->dip, temp_ip, 4);
 
     ip->checksum = 0;
     ip->checksum = checksum((uint16_t *)ip, sizeof(struct ip_hdr));
@@ -75,8 +75,8 @@ void send_tcp_syn_ack(uint8_t *buf, int len) {
         uint16_t tcp_len;
     } pseudo_hdr;
 
-    memcpy(pseudo_hdr.src_ip, ip->sip, 4);
-    memcpy(pseudo_hdr.dst_ip, ip->dip, 4);
+    memcpy(pseudo_hdr.src_ip, &ip->sip, 4);
+    memcpy(pseudo_hdr.dst_ip, &ip->dip, 4);
     pseudo_hdr.zero = 0;
     pseudo_hdr.protocol = ip->protocol;
     pseudo_hdr.tcp_len = htons(tcp_len);
@@ -126,7 +126,7 @@ void tcp_process(uint8_t *buf, int len) {
 
         struct eth_hdr *eth = (struct eth_hdr *)buf;
         memcpy(client_mac, eth->smac, 6);
-        memcpy(client_ip, ip->sip, 4);
+        memcpy(client_ip, &ip->sip, 4);
         client_port = ntohs(tcp->sport);
 
         // 记录客户端初始序列号
@@ -181,8 +181,8 @@ void tcp_send_wdm_data(char *data, int len)
     ip->frag_off = htons(0);
     ip->ttl = 64;
     ip->protocol = 6;
-    memcpy(ip->sip, local_ip, 4);
-    memcpy(ip->dip, client_ip, 4);
+    memcpy(&ip->sip, local_ip, 4);
+    memcpy(&ip->dip, client_ip, 4);
     ip->checksum = 0;
     ip->checksum = checksum((uint16_t *)ip, sizeof(struct ip_hdr));
 

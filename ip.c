@@ -10,9 +10,8 @@ extern uint8_t local_ip[4];
 void ip_process(uint8_t *buf, int len) {
     struct ip_hdr *ip = (struct ip_hdr *)(buf + sizeof(struct eth_hdr));
 
-    if (memcmp(ip->dip, local_ip, 4) != 0)
+    if (memcmp(&ip->dip, local_ip, 4) != 0)
         return;
-
     printf("收到 IPv4 包，协议：%d\n", ip->protocol);
 
     if (ip->protocol == 6) {
