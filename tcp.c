@@ -9,9 +9,20 @@
 
 uint16_t bound_port = 0;
 extern int tap_fd;
+extern uint8_t local_ip[4];  // 从arp.c导入
 
 static uint8_t local_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
 static uint8_t gateway_mac[6] = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
+
+// 客户端连接信息
+static uint8_t client_ip[4] = {0, 0, 0, 0};
+static uint16_t client_port = 0;
+static uint8_t client_mac[6] = {0, 0, 0, 0, 0, 0};
+static int client_connected = 0;
+
+// ====================== TCP 连接状态 ======================
+static uint32_t tcp_send_seq = 12345;    // 本地发送序列号（自增）
+static uint32_t tcp_recv_ack = 0;       // 本地期望收到的确认号
 
 static uint16_t checksum(uint16_t *buf, int len) {
     uint32_t sum = 0;
@@ -32,9 +43,9 @@ void send_tcp_syn_ack(uint8_t *buf, int len) {
     struct ip_hdr *ip = (struct ip_hdr *)(buf + sizeof(struct eth_hdr));
     struct tcp_hdr *tcp = (struct tcp_hdr *)(buf + sizeof(struct eth_hdr) + sizeof(struct ip_hdr));
 
-    uint8_t client_mac[6];
-    memcpy(client_mac, eth->smac, 6);
-    memcpy(eth->dmac, client_mac, 6);
+    uint8_t temp_client_mac[6];
+    memcpy(temp_client_mac, eth->smac, 6);
+    memcpy(eth->dmac, temp_client_mac, 6);
     memcpy(eth->smac, local_mac, 6);
 
     uint8_t temp_ip[4];
@@ -49,7 +60,7 @@ void send_tcp_syn_ack(uint8_t *buf, int len) {
     tcp->sport = tcp->dport;
     tcp->dport = temp_port;
 
-    tcp->flags = 0x12;
+    tcp->flags = 0x12; // SYN+ACK
     tcp->ack = htonl(ntohl(tcp->seq) + 1);
     tcp->seq = htonl(12345);
 
@@ -108,15 +119,35 @@ void tcp_process(uint8_t *buf, int len) {
         printf("\n");
     }
 
+    // 收到SYN，第一次握手
     if (tcp->flags == 0x02) {
         printf("收到 TCP 连接请求（SYN）\n");
         send_tcp_syn_ack(buf, len);
-    } else if (tcp->flags == 0x10) {
+
+        struct eth_hdr *eth = (struct eth_hdr *)buf;
+        memcpy(client_mac, eth->smac, 6);
+        memcpy(client_ip, ip->sip, 4);
+        client_port = ntohs(tcp->sport);
+
+        // 记录客户端初始序列号
+        tcp_recv_ack = ntohl(tcp->seq) + 1;
+
+        printf("客户端已连接：IP=%d.%d.%d.%d, 端口=%d\n",
+               client_ip[0], client_ip[1], client_ip[2], client_ip[3], client_port);
+    }
+    // 收到ACK，第三次握手 【核心修改】
+    else if (tcp->flags == 0x10) {
         printf("收到 TCP 确认包（ACK）\n");
-    } else if (tcp->flags == 0x18) {
-        printf("收到 TCP 数据传输包（PSH-ACK）\n");
-    } else if (tcp->flags == 0x11) {
+        // 更新发送序列号
+        tcp_send_seq = ntohl(tcp->ack);
+
+        // 第三次握手完成，正式标记连接建立
+        client_connected = 1;
+        printf("✅ TCP三次握手完成，客户端正式上线！\n");
+    }
+    else if (tcp->flags == 0x11) {
         printf("收到 TCP 关闭请求（FIN-ACK）\n");
+        client_connected = 0;
     }
 }
 
@@ -124,11 +155,14 @@ void tcp_set_bound_port(uint16_t port) {
     bound_port = port;
 }
 
-// ===================== WDM 光波导发送函数（零报错） =====================
-void tcp_send_data(uint8_t *src_ip, uint8_t *dst_ip,
-                   uint16_t src_port, uint16_t dst_port,
-                   char *data, int len)
+// 发送 WDM 数据到已连接的客户端
+void tcp_send_wdm_data(char *data, int len)
 {
+    if (!client_connected) {
+        printf("无客户端连接，无法发送WDM数据\n");
+        return;
+    }
+
     uint8_t buf[2048];
     memset(buf, 0, sizeof(buf));
 
@@ -137,7 +171,7 @@ void tcp_send_data(uint8_t *src_ip, uint8_t *dst_ip,
     struct tcp_hdr *tcp = (struct tcp_hdr *)(buf + sizeof(struct eth_hdr) + sizeof(struct ip_hdr));
 
     memcpy(eth->smac, local_mac, 6);
-    memcpy(eth->dmac, gateway_mac, 6);
+    memcpy(eth->dmac, client_mac, 6);
     eth->type = htons(0x0800);
 
     ip->version_ihl = (4 << 4) | 5;
@@ -147,23 +181,25 @@ void tcp_send_data(uint8_t *src_ip, uint8_t *dst_ip,
     ip->frag_off = htons(0);
     ip->ttl = 64;
     ip->protocol = 6;
-    memcpy(ip->sip, src_ip, 4);
-    memcpy(ip->dip, dst_ip, 4);
+    memcpy(ip->sip, local_ip, 4);
+    memcpy(ip->dip, client_ip, 4);
     ip->checksum = 0;
     ip->checksum = checksum((uint16_t *)ip, sizeof(struct ip_hdr));
 
-    tcp->sport = htons(src_port);
-    tcp->dport = htons(dst_port);
-    tcp->seq = htonl(12345);
-    tcp->ack = htonl(0);
+    tcp->sport = htons(bound_port);
+    tcp->dport = htons(client_port);
+    tcp->seq = htonl(tcp_send_seq);
+    tcp->ack = htonl(tcp_recv_ack);
     tcp->data_off = (5 << 4);
     tcp->flags = 0x18;
     tcp->window = htons(1024);
     tcp->checksum = 0;
 
+    // 拷贝数据
     uint8_t *tcp_data = (uint8_t *)tcp + sizeof(struct tcp_hdr);
     memcpy(tcp_data, data, len);
 
+    // 伪头部校验
     int tcp_packet_len = sizeof(struct tcp_hdr) + len;
     struct pseudo_header {
         uint8_t src_ip[4];
@@ -173,8 +209,8 @@ void tcp_send_data(uint8_t *src_ip, uint8_t *dst_ip,
         uint16_t tcp_len;
     } pseudo_hdr;
 
-    memcpy(pseudo_hdr.src_ip, src_ip, 4);
-    memcpy(pseudo_hdr.dst_ip, dst_ip, 4);
+    memcpy(pseudo_hdr.src_ip, local_ip, 4);
+    memcpy(pseudo_hdr.dst_ip, client_ip, 4);
     pseudo_hdr.zero = 0;
     pseudo_hdr.protocol = 6;
     pseudo_hdr.tcp_len = htons(tcp_packet_len);
@@ -184,8 +220,12 @@ void tcp_send_data(uint8_t *src_ip, uint8_t *dst_ip,
     memcpy(check_buf + sizeof(pseudo_hdr), tcp, tcp_packet_len);
     tcp->checksum = checksum((uint16_t *)check_buf, sizeof(pseudo_hdr) + tcp_packet_len);
 
+    // 发送
     int total_len = sizeof(struct eth_hdr) + ntohs(ip->total_len);
     tap_write(tap_fd, buf, total_len);
 
-    printf("TCP发送成功：%s\n", data);
+    // 发送后序列号自增
+    tcp_send_seq += len;
+
+    printf("WDM数据发送成功！长度：%d\n", len);
 }

@@ -54,26 +54,19 @@ void *wdm_sender_thread(void *arg)
 
         wdm_coupling_pack(&wdm, send_buf, &send_len);
 
-        extern void tcp_send_data(uint8_t *src_ip, uint8_t *dst_ip,
-                                 uint16_t src_port, uint16_t dst_port,
-                                 char *data, int len);
-
-        uint8_t src_ip[4] = {127,0,0,1};
-        uint8_t dst_ip[4] = {127,0,0,1};
-        tcp_send_data(src_ip, dst_ip, 8080, 12345, send_buf, send_len);
+        // 你tcp.c里自带的发送函数，直接用！
+        tcp_send_wdm_data(send_buf, send_len);
 
         sleep(2);
     }
     return NULL;
 }
 
-
-
 int main() {
     tap_fd = tap_create(TAP_DEV);
     if (tap_fd < 0) return -1;
 
-    // 绑定端口
+    // 绑定端口 8080（你tcp.c里的函数）
     tcp_set_bound_port(8080);
 
     pthread_t tid;
