@@ -19,4 +19,12 @@ struct tcp_hdr {
 // 处理 TCP 数据包
 void tcp_process(uint8_t *buf, int len);
 
+// 设置绑定端口
+void tcp_set_bound_port(uint16_t port);
+
+// 发送 TCP 数据
+void tcp_send_data(uint8_t *src_ip, uint8_t *dst_ip,
+                   uint16_t src_port, uint16_t dst_port,
+                   char *data, int len);
+
 #endif

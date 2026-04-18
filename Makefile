@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -g
-OBJ = main.o tap.o arp.o ip.o tcp.o socket.o icmp.o
+OBJ = main.o tap.o arp.o ip.o tcp.o socket.o icmp.o wdm_coupling.o
 TARGET = mini-tcpipnew
 
 all: $(TARGET)

@@ -22,5 +22,3 @@ void ip_process(uint8_t *buf, int len) {
         icmp_process(buf, len);
     }
 }
-// 加在 ip.c 任意位置
-void icmp_process(uint8_t *buf, int len) {}

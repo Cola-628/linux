@@ -58,18 +58,16 @@ void *wdm_sender_thread(void *arg)
                                  uint16_t src_port, uint16_t dst_port,
                                  char *data, int len);
 
-        uint8_t src_ip[4] = {192,168,100,10};
-        uint8_t dst_ip[4] = {192,168,100,2};
-        tcp_send_data(src_ip, dst_ip, 8080, 8080, send_buf, send_len);
+        uint8_t src_ip[4] = {127,0,0,1};
+        uint8_t dst_ip[4] = {127,0,0,1};
+        tcp_send_data(src_ip, dst_ip, 8080, 12345, send_buf, send_len);
 
         sleep(2);
     }
     return NULL;
 }
 
-// 空实现，解决未定义错误
-void mini_socket_init(){}
-void mini_bind(int port){}
+
 
 int main() {
     tap_fd = tap_create(TAP_DEV);
