@@ -253,8 +253,8 @@ int main() {
     struct ip_hdr *ip = (void *)(buf + 14);
     struct tcp_hdr *tcp = (void *)(buf + 14 + 20);
 
-    // 只处理目标端口8080的数据包，过滤杂包
-    if (ntohs(tcp->dport) != 8080)
+    // 只处理源端口8080的数据包，过滤杂包
+    if (ntohs(tcp->sport) != 8080)
       continue;
 
     int data_off = (tcp->data_off >> 4) * 4;
@@ -264,11 +264,39 @@ int main() {
     if (data_len <= 0)
       continue;
 
-    // 按结构体解析WDM，不再乱码打印
-    printf("=====================================\n");
-    printf("收到WDM数据包，长度：%d 字节\n", data_len);
-    printf("1030nm输入、四路输出、耦合效率、告警状态\n");
-    printf("=====================================\n\n");
+   // 修改客户端解析逻辑
+printf("=====================================\n");
+printf("收到WDM数据包，长度：%d 字节\n", data_len);
+
+// 服务器发送的是字符串格式，直接打印
+data[data_len] = '\0'; // 确保字符串结束
+printf("WDM数据: %s\n", data);
+
+// 简化解析，直接提取关键信息
+char *in_ptr = strstr((char*)data, "IN=");
+char *out1_ptr = strstr((char*)data, "OUT1=");
+char *out2_ptr = strstr((char*)data, "OUT2=");
+char *out3_ptr = strstr((char*)data, "OUT3=");
+char *out4_ptr = strstr((char*)data, "OUT4=");
+char *eff_ptr = strstr((char*)data, "EFF=");
+char *alarm_ptr = strstr((char*)data, "ALARM=");
+
+if (in_ptr && out1_ptr && out2_ptr && out3_ptr && out4_ptr && eff_ptr && alarm_ptr) {
+    float input = atof(in_ptr + 3);
+    float out1 = atof(out1_ptr + 5);
+    float out2 = atof(out2_ptr + 5);
+    float out3 = atof(out3_ptr + 5);
+    float out4 = atof(out4_ptr + 5);
+    float eff = atof(eff_ptr + 4);
+    int alarm = atoi(alarm_ptr + 6);
+    
+    printf("\n解析结果:\n");
+    printf("1030nm输入: %.1f\n", input);
+    printf("OUT1:%.1f OUT2:%.1f OUT3:%.1f OUT4:%.1f\n", out1, out2, out3, out4);
+    printf("耦合效率: %.1f%%\n", eff);
+    printf("告警状态: %s\n", alarm == 0 ? "正常" : "异常");
+}
+printf("=====================================\n\n");
     usleep(200000); // 放慢速度，不刷屏
   }
 }
