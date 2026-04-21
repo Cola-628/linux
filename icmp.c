@@ -44,8 +44,8 @@ void icmp_process(uint8_t *buf, int len) {
     icmp->checksum = checksum((uint16_t *)icmp, len - sizeof(struct eth_hdr) - sizeof(struct ip_hdr));
 
     // 交换 IP 源/目标
-    memcpy(ip->dip, ip->sip, 4);
-    memcpy(ip->sip, local_ip, 4);
+    memcpy((void *)&ip->dip, (const void *)&ip->sip, 4);
+    memcpy((void *)&ip->sip, (const void *)local_ip, 4);
 
     // 重新计算 IP 头部校验和
     ip->checksum = 0;

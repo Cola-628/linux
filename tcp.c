@@ -6,6 +6,10 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <stdint.h>
+#include <pthread.h>
+
+// 互斥锁定义
+pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 uint16_t bound_port = 0;
 extern int tap_fd;
@@ -125,12 +129,16 @@ void tcp_process(uint8_t *buf, int len) {
         send_tcp_syn_ack(buf, len);
 
         struct eth_hdr *eth = (struct eth_hdr *)buf;
+        
+        // 加锁保护共享资源
+        pthread_mutex_lock(&client_mutex);
         memcpy(client_mac, eth->smac, 6);
         memcpy(client_ip, &ip->sip, 4);
         client_port = ntohs(tcp->sport);
-
+        
         // 记录客户端初始序列号
         tcp_recv_ack = ntohl(tcp->seq) + 1;
+        pthread_mutex_unlock(&client_mutex);
 
         printf("客户端已连接：IP=%d.%d.%d.%d, 端口=%d\n",
                client_ip[0], client_ip[1], client_ip[2], client_ip[3], client_port);
@@ -141,13 +149,19 @@ void tcp_process(uint8_t *buf, int len) {
         // 更新发送序列号
         tcp_send_seq = ntohl(tcp->ack);
 
+        // 加锁保护共享资源
+        pthread_mutex_lock(&client_mutex);
         // 第三次握手完成，正式标记连接建立
         client_connected = 1;
         printf("✅ TCP三次握手完成，客户端正式上线！\n");
+        pthread_mutex_unlock(&client_mutex);
     }
     else if (tcp->flags == 0x11) {
         printf("收到 TCP 关闭请求（FIN-ACK）\n");
+        // 加锁保护共享资源
+        pthread_mutex_lock(&client_mutex);
         client_connected = 0;
+        pthread_mutex_unlock(&client_mutex);
     }
 }
 
@@ -158,10 +172,21 @@ void tcp_set_bound_port(uint16_t port) {
 // 发送 WDM 数据到已连接的客户端
 void tcp_send_wdm_data(char *data, int len)
 {
+    // 加锁检查连接状态
+    pthread_mutex_lock(&client_mutex);
     if (!client_connected) {
+        pthread_mutex_unlock(&client_mutex);
         printf("无客户端连接，无法发送WDM数据\n");
         return;
     }
+    
+    // 复制客户端信息到临时变量
+    uint8_t temp_client_mac[6];
+    uint8_t temp_client_ip[4];
+    uint16_t temp_client_port = client_port;
+    memcpy(temp_client_mac, client_mac, 6);
+    memcpy(temp_client_ip, client_ip, 4);
+    pthread_mutex_unlock(&client_mutex);
 
     uint8_t buf[2048];
     memset(buf, 0, sizeof(buf));
@@ -171,7 +196,7 @@ void tcp_send_wdm_data(char *data, int len)
     struct tcp_hdr *tcp = (struct tcp_hdr *)(buf + sizeof(struct eth_hdr) + sizeof(struct ip_hdr));
 
     memcpy(eth->smac, local_mac, 6);
-    memcpy(eth->dmac, client_mac, 6);
+    memcpy(eth->dmac, temp_client_mac, 6);
     eth->type = htons(0x0800);
 
     ip->version_ihl = (4 << 4) | 5;
@@ -182,12 +207,12 @@ void tcp_send_wdm_data(char *data, int len)
     ip->ttl = 64;
     ip->protocol = 6;
     memcpy(&ip->sip, local_ip, 4);
-    memcpy(&ip->dip, client_ip, 4);
+    memcpy(&ip->dip, temp_client_ip, 4);
     ip->checksum = 0;
     ip->checksum = checksum((uint16_t *)ip, sizeof(struct ip_hdr));
 
     tcp->sport = htons(bound_port);
-    tcp->dport = htons(client_port);
+    tcp->dport = htons(temp_client_port);
     tcp->seq = htonl(tcp_send_seq);
     tcp->ack = htonl(tcp_recv_ack);
     tcp->data_off = (5 << 4);
@@ -210,7 +235,7 @@ void tcp_send_wdm_data(char *data, int len)
     } pseudo_hdr;
 
     memcpy(pseudo_hdr.src_ip, local_ip, 4);
-    memcpy(pseudo_hdr.dst_ip, client_ip, 4);
+    memcpy(pseudo_hdr.dst_ip, temp_client_ip, 4);
     pseudo_hdr.zero = 0;
     pseudo_hdr.protocol = 6;
     pseudo_hdr.tcp_len = htons(tcp_packet_len);
